@@ -1,0 +1,138 @@
+# Push a tag like v0.1.0 to build binaries, publish a GitHub Release,
+# and update the Homebrew formula in virajshoor/homebrew-tap.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name=cairnscope-${{ matrix.target }}
+          mkdir "$name"
+          cp README.md LICENSE "$name/"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp target/${{ matrix.target }}/release/cairnscope.exe "$name/"
+            7z a "$name.zip" "$name" >/dev/null
+            echo "ASSET=$name.zip" >> "$GITHUB_ENV"
+          else
+            cp target/${{ matrix.target }}/release/cairnscope "$name/"
+            tar czf "$name.tar.gz" "$name"
+            echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.ASSET }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" \
+            --title "Cairnscope $GITHUB_REF_NAME" --generate-notes \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sums
+          path: dist/SHA256SUMS.txt
+
+  homebrew:
+    needs: release
+    # Pre-releases (v0.1.0-rc1) don't touch the tap.
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sums
+      - name: Write formula
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          sha() { grep " cairnscope-$1.tar.gz$" SHA256SUMS.txt | cut -d' ' -f1; }
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          cat > cairnscope.rb <<RUBY
+          class Cairnscope < Formula
+            desc "Local-first interactive source explorer: symbol graph + code, powered by SCIP"
+            homepage "https://github.com/$GITHUB_REPOSITORY"
+            version "$v"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "$url/cairnscope-aarch64-apple-darwin.tar.gz"
+                sha256 "$(sha aarch64-apple-darwin)"
+              end
+              on_intel do
+                url "$url/cairnscope-x86_64-apple-darwin.tar.gz"
+                sha256 "$(sha x86_64-apple-darwin)"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "$url/cairnscope-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "$(sha x86_64-unknown-linux-gnu)"
+              end
+            end
+
+            def install
+              bin.install "cairnscope"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/cairnscope --version")
+            end
+          end
+          RUBY
+          cat cairnscope.rb
+      - name: Push to tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::warning::HOMEBREW_TAP_TOKEN not set; skipping tap update"; exit 0; fi
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/virajshoor/homebrew-tap.git" tap
+          mkdir -p tap/Formula && cp cairnscope.rb tap/Formula/
+          cd tap
+          git config user.name "cairnscope-release"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/cairnscope.rb
+          git commit -m "cairnscope ${GITHUB_REF_NAME}" && git push

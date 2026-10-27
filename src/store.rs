@@ -2,7 +2,7 @@
 //! writes through this API; the CLI, UI server and MCP server read through it.
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use std::path::Path;
 
@@ -216,7 +216,8 @@ impl Store {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let conn = Connection::open(path).with_context(|| format!("opening index {}", path.display()))?;
+        let conn =
+            Connection::open(path).with_context(|| format!("opening index {}", path.display()))?;
         Self::init(conn)
     }
 
@@ -257,25 +258,44 @@ impl Store {
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?1, ?2)", params![key, value])?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES(?1, ?2)",
+            params![key, value],
+        )?;
         Ok(())
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0))
+            .optional()?)
     }
 
     // ---------- writes ----------
 
     pub fn file_hash(&self, path: &str) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT hash FROM files WHERE path=?1", [path], |r| r.get(0)).optional()?)
+        Ok(self
+            .conn
+            .query_row("SELECT hash FROM files WHERE path=?1", [path], |r| r.get(0))
+            .optional()?)
     }
 
     /// Insert or replace a file. Clears that file's previous occurrences and edges,
     /// so callers re-add them. Returns the file id.
-    pub fn upsert_file(&self, path: &str, language: &str, text: &str, approx: bool, indexer: &str) -> Result<i64> {
+    pub fn upsert_file(
+        &self,
+        path: &str,
+        language: &str,
+        text: &str,
+        approx: bool,
+        indexer: &str,
+    ) -> Result<i64> {
         let hash = hash_text(text);
-        let existing: Option<i64> = self.conn.query_row("SELECT id FROM files WHERE path=?1", [path], |r| r.get(0)).optional()?;
+        let existing: Option<i64> = self
+            .conn
+            .query_row("SELECT id FROM files WHERE path=?1", [path], |r| r.get(0))
+            .optional()?;
         let id = match existing {
             Some(id) => {
                 self.clear_file_data(id)?;
@@ -297,8 +317,10 @@ impl Store {
     }
 
     fn clear_file_data(&self, file_id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM occurrences WHERE file_id=?1", [file_id])?;
-        self.conn.execute("DELETE FROM edges WHERE file_id=?1", [file_id])?;
+        self.conn
+            .execute("DELETE FROM occurrences WHERE file_id=?1", [file_id])?;
+        self.conn
+            .execute("DELETE FROM edges WHERE file_id=?1", [file_id])?;
         self.conn.execute(
             "UPDATE symbols SET def_file=NULL, def_line=NULL, def_col=NULL WHERE def_file=?1",
             [file_id],
@@ -307,7 +329,13 @@ impl Store {
     }
 
     pub fn remove_file(&self, path: &str) -> Result<()> {
-        if let Some(id) = self.conn.query_row("SELECT id FROM files WHERE path=?1", [path], |r| r.get::<_, i64>(0)).optional()? {
+        if let Some(id) = self
+            .conn
+            .query_row("SELECT id FROM files WHERE path=?1", [path], |r| {
+                r.get::<_, i64>(0)
+            })
+            .optional()?
+        {
             self.clear_file_data(id)?;
             self.conn.execute("DELETE FROM files WHERE id=?1", [id])?;
         }
@@ -316,7 +344,9 @@ impl Store {
 
     pub fn file_paths(&self) -> Result<Vec<String>> {
         let mut st = self.conn.prepare("SELECT path FROM files")?;
-        let v = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let v = st
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(v)
     }
 
@@ -354,7 +384,10 @@ impl Store {
     }
 
     pub fn symbol_id(&self, scip: &str) -> Result<Option<i64>> {
-        Ok(self.conn.query_row("SELECT id FROM symbols WHERE scip=?1", [scip], |r| r.get(0)).optional()?)
+        Ok(self
+            .conn
+            .query_row("SELECT id FROM symbols WHERE scip=?1", [scip], |r| r.get(0))
+            .optional()?)
     }
 
     pub fn set_definition(&self, symbol_id: i64, file_id: i64, line: i64, col: i64) -> Result<()> {
@@ -415,8 +448,12 @@ impl Store {
 
     pub fn stats(&self) -> Result<Stats> {
         let c = |sql: &str| -> Result<i64> { Ok(self.conn.query_row(sql, [], |r| r.get(0))?) };
-        let mut st = self.conn.prepare("SELECT language, COUNT(*) FROM files GROUP BY language ORDER BY 2 DESC")?;
-        let languages = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut st = self
+            .conn
+            .prepare("SELECT language, COUNT(*) FROM files GROUP BY language ORDER BY 2 DESC")?;
+        let languages = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(Stats {
             files: c("SELECT COUNT(*) FROM files")?,
             approx_files: c("SELECT COUNT(*) FROM files WHERE approx=1")?,
@@ -428,7 +465,9 @@ impl Store {
     }
 
     pub fn symbol(&self, id: i64) -> Result<Option<Symbol>> {
-        let sql = format!("SELECT {SYMBOL_COLS} FROM symbols s LEFT JOIN files f ON f.id = s.def_file WHERE s.id=?1");
+        let sql = format!(
+            "SELECT {SYMBOL_COLS} FROM symbols s LEFT JOIN files f ON f.id = s.def_file WHERE s.id=?1"
+        );
         Ok(self.conn.query_row(&sql, [id], row_to_symbol).optional()?)
     }
 
@@ -449,7 +488,9 @@ impl Store {
              LIMIT ?4"
         );
         let mut st = self.conn.prepare(&sql)?;
-        let v = st.query_map(params![like, q, prefix, limit as i64], row_to_symbol)?.collect::<rusqlite::Result<_>>()?;
+        let v = st
+            .query_map(params![like, q, prefix, limit as i64], row_to_symbol)?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(v)
     }
 
@@ -459,7 +500,13 @@ impl Store {
             "SELECT path, language, approx FROM files WHERE path LIKE ?1 ESCAPE '\\' ORDER BY length(path), path LIMIT ?2",
         )?;
         let v = st
-            .query_map(params![like, limit as i64], |r| Ok(FileEntry { path: r.get(0)?, language: r.get(1)?, approx: r.get::<_, i64>(2)? != 0 }))?
+            .query_map(params![like, limit as i64], |r| {
+                Ok(FileEntry {
+                    path: r.get(0)?,
+                    language: r.get(1)?,
+                    approx: r.get::<_, i64>(2)? != 0,
+                })
+            })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(v)
     }
@@ -471,14 +518,21 @@ impl Store {
         if needle.is_empty() {
             return Ok(hits);
         }
-        let mut st = self.conn.prepare("SELECT path, text FROM files WHERE instr(text, ?1) > 0 ORDER BY path")?;
+        let mut st = self
+            .conn
+            .prepare("SELECT path, text FROM files WHERE instr(text, ?1) > 0 ORDER BY path")?;
         let mut rows = st.query([needle])?;
         while let Some(r) = rows.next()? {
             let path: String = r.get(0)?;
             let text: String = r.get(1)?;
             for (i, l) in text.lines().enumerate() {
                 if let Some(col) = l.find(needle) {
-                    hits.push(TextHit { file: path.clone(), line: i as i64, col: l[..col].chars().count() as i64, snippet: snippet(l) });
+                    hits.push(TextHit {
+                        file: path.clone(),
+                        line: i as i64,
+                        col: l[..col].chars().count() as i64,
+                        snippet: snippet(l),
+                    });
                     if hits.len() >= limit {
                         return Ok(hits);
                     }
@@ -491,11 +545,15 @@ impl Store {
     pub fn file(&self, path: &str) -> Result<Option<FileView>> {
         let row: Option<(i64, String, i64, String)> = self
             .conn
-            .query_row("SELECT id, language, approx, text FROM files WHERE path=?1", [path], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-            })
+            .query_row(
+                "SELECT id, language, approx, text FROM files WHERE path=?1",
+                [path],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
             .optional()?;
-        let Some((id, language, approx, text)) = row else { return Ok(None) };
+        let Some((id, language, approx, text)) = row else {
+            return Ok(None);
+        };
         let mut st = self.conn.prepare(
             "SELECT o.symbol_id, o.line, o.col, o.end_line, o.end_col, o.roles, s.kind
              FROM occurrences o JOIN symbols s ON s.id = o.symbol_id
@@ -514,7 +572,13 @@ impl Store {
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
-        Ok(Some(FileView { path: path.to_string(), language, approx: approx != 0, text, occurrences }))
+        Ok(Some(FileView {
+            path: path.to_string(),
+            language,
+            approx: approx != 0,
+            text,
+            occurrences,
+        }))
     }
 
     /// All files, for the file tree.
@@ -529,7 +593,9 @@ impl Store {
              WHERE f.path=?1 AND s.kind NOT IN ('parameter','local') ORDER BY s.def_line, s.def_col"
         );
         let mut st = self.conn.prepare(&sql)?;
-        let v = st.query_map([path], row_to_symbol)?.collect::<rusqlite::Result<_>>()?;
+        let v = st
+            .query_map([path], row_to_symbol)?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(v)
     }
 
@@ -550,7 +616,11 @@ impl Store {
                     end_line: r.get(3)?,
                     end_col: r.get(4)?,
                     is_def: r.get::<_, i64>(5)? & ROLE_DEFINITION != 0,
-                    snippet: text.lines().nth(line as usize).map(snippet).unwrap_or_default(),
+                    snippet: text
+                        .lines()
+                        .nth(line as usize)
+                        .map(snippet)
+                        .unwrap_or_default(),
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -567,11 +637,27 @@ impl Store {
         self.edges_for(id, kinds, limit, false)
     }
 
-    fn edges_for(&self, id: i64, kinds: &[&str], limit: usize, incoming: bool) -> Result<(Vec<Edge>, i64)> {
-        let (me, other) = if incoming { ("dst", "src") } else { ("src", "dst") };
-        let kinds_sql = kinds.iter().map(|k| format!("'{}'", k.replace('\'', ""))).collect::<Vec<_>>().join(",");
+    fn edges_for(
+        &self,
+        id: i64,
+        kinds: &[&str],
+        limit: usize,
+        incoming: bool,
+    ) -> Result<(Vec<Edge>, i64)> {
+        let (me, other) = if incoming {
+            ("dst", "src")
+        } else {
+            ("src", "dst")
+        };
+        let kinds_sql = kinds
+            .iter()
+            .map(|k| format!("'{}'", k.replace('\'', "")))
+            .collect::<Vec<_>>()
+            .join(",");
         let total: i64 = self.conn.query_row(
-            &format!("SELECT COUNT(DISTINCT {other}) FROM edges WHERE {me}=?1 AND kind IN ({kinds_sql})"),
+            &format!(
+                "SELECT COUNT(DISTINCT {other}) FROM edges WHERE {me}=?1 AND kind IN ({kinds_sql})"
+            ),
             [id],
             |r| r.get(0),
         )?;
@@ -584,7 +670,13 @@ impl Store {
         );
         let mut st = self.conn.prepare(&sql)?;
         let v = st
-            .query_map(params![id, limit as i64], |r| Ok(Edge { symbol: row_to_symbol(r)?, kind: r.get(11)?, count: r.get(12)? }))?
+            .query_map(params![id, limit as i64], |r| {
+                Ok(Edge {
+                    symbol: row_to_symbol(r)?,
+                    kind: r.get(11)?,
+                    count: r.get(12)?,
+                })
+            })?
             .collect::<rusqlite::Result<_>>()?;
         Ok((v, total))
     }
@@ -601,20 +693,48 @@ impl Store {
              ORDER BY (s.def_file IS NULL), s.def_line, s.name LIMIT ?2"
         );
         let mut st = self.conn.prepare(&sql)?;
-        let v = st.query_map(params![id, limit as i64], row_to_symbol)?.collect::<rusqlite::Result<_>>()?;
+        let v = st
+            .query_map(params![id, limit as i64], row_to_symbol)?
+            .collect::<rusqlite::Result<_>>()?;
         Ok((v, total))
     }
 
     /// Everything the graph view needs around one symbol, each list capped at `limit`.
     pub fn neighborhood(&self, id: i64, limit: usize) -> Result<Option<Neighborhood>> {
-        let Some(focus) = self.symbol(id)? else { return Ok(None) };
-        let parent = match focus.parent { Some(p) => self.symbol(p)?, None => None };
+        let Some(focus) = self.symbol(id)? else {
+            return Ok(None);
+        };
+        let parent = match focus.parent {
+            Some(p) => self.symbol(p)?,
+            None => None,
+        };
         let (members, members_total) = self.members(id, limit)?;
         let (incoming, incoming_total) = self.incoming(id, &[EDGE_CALL, EDGE_REF], limit)?;
         let (outgoing, outgoing_total) = self.outgoing(id, &[EDGE_CALL, EDGE_REF], limit)?;
-        let bases = self.outgoing(id, &[EDGE_INHERIT], limit)?.0.into_iter().map(|e| e.symbol).collect();
-        let derived = self.incoming(id, &[EDGE_INHERIT], limit)?.0.into_iter().map(|e| e.symbol).collect();
-        Ok(Some(Neighborhood { focus, parent, members, incoming, outgoing, bases, derived, incoming_total, outgoing_total, members_total }))
+        let bases = self
+            .outgoing(id, &[EDGE_INHERIT], limit)?
+            .0
+            .into_iter()
+            .map(|e| e.symbol)
+            .collect();
+        let derived = self
+            .incoming(id, &[EDGE_INHERIT], limit)?
+            .0
+            .into_iter()
+            .map(|e| e.symbol)
+            .collect();
+        Ok(Some(Neighborhood {
+            focus,
+            parent,
+            members,
+            incoming,
+            outgoing,
+            bases,
+            derived,
+            incoming_total,
+            outgoing_total,
+            members_total,
+        }))
     }
 
     /// Innermost symbol defined at or enclosing `line` in `path` (used for click-in-code -> graph).
@@ -638,22 +758,33 @@ impl Store {
     // ---------- bookmarks & trails ----------
 
     pub fn add_bookmark(&self, scip: &str, note: &str) -> Result<()> {
-        self.conn.execute("INSERT OR REPLACE INTO bookmarks(scip, note, created) VALUES(?1,?2,?3)", params![scip, note, now()])?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO bookmarks(scip, note, created) VALUES(?1,?2,?3)",
+            params![scip, note, now()],
+        )?;
         Ok(())
     }
 
     pub fn remove_bookmark(&self, scip: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM bookmarks WHERE scip=?1", [scip])?;
+        self.conn
+            .execute("DELETE FROM bookmarks WHERE scip=?1", [scip])?;
         Ok(())
     }
 
     /// Bookmarks with their current symbol (None if the symbol vanished after re-indexing).
     pub fn bookmarks(&self) -> Result<Vec<(String, String, Option<Symbol>)>> {
-        let mut st = self.conn.prepare("SELECT scip, note FROM bookmarks ORDER BY created")?;
-        let rows: Vec<(String, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut st = self
+            .conn
+            .prepare("SELECT scip, note FROM bookmarks ORDER BY created")?;
+        let rows: Vec<(String, String)> = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
         rows.into_iter()
             .map(|(scip, note)| {
-                let sym = match self.symbol_id(&scip)? { Some(id) => self.symbol(id)?, None => None };
+                let sym = match self.symbol_id(&scip)? {
+                    Some(id) => self.symbol(id)?,
+                    None => None,
+                };
                 Ok((scip, note, sym))
             })
             .collect()
@@ -661,29 +792,43 @@ impl Store {
 
     /// `steps` is a JSON array of SCIP symbol strings.
     pub fn save_trail(&self, name: &str, steps: &str) -> Result<()> {
-        self.conn.execute("INSERT OR REPLACE INTO trails(name, steps, updated) VALUES(?1,?2,?3)", params![name, steps, now()])?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO trails(name, steps, updated) VALUES(?1,?2,?3)",
+            params![name, steps, now()],
+        )?;
         Ok(())
     }
 
     pub fn delete_trail(&self, name: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM trails WHERE name=?1", [name])?;
+        self.conn
+            .execute("DELETE FROM trails WHERE name=?1", [name])?;
         Ok(())
     }
 
     pub fn trails(&self) -> Result<Vec<(String, String)>> {
-        let mut st = self.conn.prepare("SELECT name, steps FROM trails ORDER BY updated DESC")?;
-        let v = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let mut st = self
+            .conn
+            .prepare("SELECT name, steps FROM trails ORDER BY updated DESC")?;
+        let v = st
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
         Ok(v)
     }
 }
 
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn snippet(line: &str) -> String {
     let t = line.trim();
-    if t.chars().count() > 200 { t.chars().take(200).collect::<String>() + "…" } else { t.to_string() }
+    if t.chars().count() > 200 {
+        t.chars().take(200).collect::<String>() + "…"
+    } else {
+        t.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -691,14 +836,26 @@ mod tests {
     use super::*;
 
     fn sym(scip: &str, name: &str, kind: &str, parent: Option<&str>) -> NewSymbol {
-        NewSymbol { scip: scip.into(), name: name.into(), kind: kind.into(), parent_scip: parent.map(Into::into), ..Default::default() }
+        NewSymbol {
+            scip: scip.into(),
+            name: name.into(),
+            kind: kind.into(),
+            parent_scip: parent.map(Into::into),
+            ..Default::default()
+        }
     }
 
     #[test]
     fn roundtrip_graph_queries() -> Result<()> {
         let mut s = Store::open_in_memory()?;
         s.transaction(|s| {
-            let f = s.upsert_file("a.ts", "typescript", "class A {\n  run() { helper(); }\n}\nfunction helper() {}\n", false, "test")?;
+            let f = s.upsert_file(
+                "a.ts",
+                "typescript",
+                "class A {\n  run() { helper(); }\n}\nfunction helper() {}\n",
+                false,
+                "test",
+            )?;
             let a = s.upsert_symbol(&sym("t . a/A#", "A", "class", None))?;
             let run = s.upsert_symbol(&sym("t . a/A#run().", "run", "method", Some("t . a/A#")))?;
             let helper = s.upsert_symbol(&sym("t . a/helper().", "helper", "function", None))?;
@@ -719,7 +876,9 @@ mod tests {
         assert_eq!(n.incoming[0].symbol.name, "run");
         assert_eq!(n.incoming[0].count, 2);
         let run = n.incoming[0].symbol.id;
-        let a = s.neighborhood(s.symbol_id("t . a/A#")?.unwrap(), 10)?.unwrap();
+        let a = s
+            .neighborhood(s.symbol_id("t . a/A#")?.unwrap(), 10)?
+            .unwrap();
         assert_eq!(a.members[0].id, run);
         assert_eq!(s.references(helper, 10)?.len(), 2);
         assert_eq!(s.grep("helper()", 10)?.len(), 2);
@@ -728,7 +887,8 @@ mod tests {
         // Re-indexing the file clears its edges; gc removes orphans.
         s.upsert_file("a.ts", "typescript", "// empty\n", false, "test")?;
         assert!(s.neighborhood(helper, 10)?.unwrap().incoming.is_empty());
-        s.conn().execute("DELETE FROM symbols WHERE parent IS NOT NULL", [])?;
+        s.conn()
+            .execute("DELETE FROM symbols WHERE parent IS NOT NULL", [])?;
         assert!(s.gc_symbols()? >= 1);
         Ok(())
     }

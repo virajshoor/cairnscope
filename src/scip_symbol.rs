@@ -56,7 +56,10 @@ fn name_before(s: &str) -> &str {
             return &stripped[open + 1..];
         }
     }
-    let start = s.rfind(['/', '#', '.', ':', '`']).map(|i| i + 1).unwrap_or(0);
+    let start = s
+        .rfind(['/', '#', '.', ':', '`'])
+        .map(|i| i + 1)
+        .unwrap_or(0);
     &s[start..]
 }
 
@@ -104,18 +107,28 @@ pub fn parent(symbol: &str) -> Option<String> {
     // Find where the last descriptor starts in `descs`.
     let trimmed = descs.trim_end();
     let cut = match suffix {
-        '(' => trimmed[..trimmed.len() - 1].rfind('(').and_then(|i| trimmed[..i].rfind(name))?,
+        '(' => trimmed[..trimmed.len() - 1]
+            .rfind('(')
+            .and_then(|i| trimmed[..i].rfind(name))?,
         ')' => trimmed.rfind('(')?,
         ']' => trimmed.rfind('[')?,
         _ => trimmed[..trimmed.len() - 1].rfind(name)?,
     };
-    let cut = if cut > 0 && trimmed.as_bytes()[cut - 1] == b'`' { cut - 1 } else { cut };
+    let cut = if cut > 0 && trimmed.as_bytes()[cut - 1] == b'`' {
+        cut - 1
+    } else {
+        cut
+    };
     if cut == 0 {
         return None;
     }
     let p = &symbol[..prefix_len + cut];
     // Namespaces are package paths, not owners worth showing as parents.
-    if p.ends_with('/') { None } else { Some(p.to_string()) }
+    if p.ends_with('/') {
+        None
+    } else {
+        Some(p.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -128,16 +141,25 @@ mod tests {
     fn names_and_kinds() {
         assert_eq!(display_name(M), "bar");
         assert_eq!(kind_from_suffix(M), "function");
-        assert_eq!(parent(M).as_deref(), Some("scip-typescript npm pkg 1.0.0 src/`a.ts`/Foo#"));
+        assert_eq!(
+            parent(M).as_deref(),
+            Some("scip-typescript npm pkg 1.0.0 src/`a.ts`/Foo#")
+        );
         let t = "scip-typescript npm pkg 1.0.0 src/`a.ts`/Foo#";
         assert_eq!(display_name(t), "Foo");
         assert_eq!(kind_from_suffix(t), "type");
         assert_eq!(parent(t), None);
-        assert_eq!(display_name("rust-analyzer cargo foo 0.1.0 bar/baz()."), "baz");
+        assert_eq!(
+            display_name("rust-analyzer cargo foo 0.1.0 bar/baz()."),
+            "baz"
+        );
         assert_eq!(display_name("cxx . . $ main(49f6e7a06ebc5aa8)."), "main");
         assert_eq!(kind_from_suffix("local 4"), "local");
         assert_eq!(display_name("a b c d x/`weird name`#"), "weird name");
         assert_eq!(kind_from_suffix("a b c d x/Foo#bar().(arg)"), "parameter");
-        assert_eq!(parent("a b c d x/Foo#bar().(arg)").as_deref(), Some("a b c d x/Foo#bar()."));
+        assert_eq!(
+            parent("a b c d x/Foo#bar().(arg)").as_deref(),
+            Some("a b c d x/Foo#bar().")
+        );
     }
 }
